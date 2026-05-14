@@ -4,13 +4,19 @@ export async function GET(req: NextRequest) {
   const { searchParams, origin } = req.nextUrl;
   const code = searchParams.get('code');
 
-  if (!code) return NextResponse.redirect(`${origin}/`);
+  if (!code) {
+    return NextResponse.redirect(`${origin}/?auth_error=no_code`);
+  }
 
-  const restApiKey = process.env.KAKAO_REST_API_KEY!;
+  const restApiKey = process.env.KAKAO_REST_API_KEY;
+  if (!restApiKey) {
+    return NextResponse.redirect(`${origin}/?auth_error=no_api_key`);
+  }
+
   const redirectUri = `${origin}/auth/kakao/callback`;
 
   // 1. 코드 → 토큰
-  let access_token: string;
+  let tokenData: Record<string, unknown>;
   try {
     const tokenRes = await fetch('https://kauth.kakao.com/oauth/token', {
       method: 'POST',
@@ -22,18 +28,20 @@ export async function GET(req: NextRequest) {
         code,
       }),
     });
-    const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) {
-      console.error('Token error:', JSON.stringify(tokenData));
-      return NextResponse.redirect(`${origin}/?auth_error=token`);
-    }
-    access_token = tokenData.access_token;
+    tokenData = await tokenRes.json();
   } catch (e) {
-    console.error('Token fetch error:', e);
-    return NextResponse.redirect(`${origin}/?auth_error=fetch`);
+    return NextResponse.redirect(`${origin}/?auth_error=token_fetch_failed`);
   }
 
-  // 2. 카카오 사용자 정보
+  if (!tokenData.access_token) {
+    const errCode = encodeURIComponent(String(tokenData.error ?? 'unknown'));
+    const errDesc = encodeURIComponent(String(tokenData.error_description ?? ''));
+    return NextResponse.redirect(`${origin}/?auth_error=token_fail&ec=${errCode}&ed=${errDesc}`);
+  }
+
+  const access_token = tokenData.access_token as string;
+
+  // 2. 사용자 정보
   let kakaoUser: Record<string, unknown>;
   try {
     const userRes = await fetch('https://kapi.kakao.com/v2/user/me', {
@@ -41,7 +49,7 @@ export async function GET(req: NextRequest) {
     });
     kakaoUser = await userRes.json();
   } catch {
-    return NextResponse.redirect(`${origin}/?auth_error=user`);
+    return NextResponse.redirect(`${origin}/?auth_error=user_fetch_failed`);
   }
 
   const kakaoId = String(kakaoUser.id);
@@ -52,8 +60,7 @@ export async function GET(req: NextRequest) {
   const avatarUrl = (profile?.thumbnail_image_url as string) ?? null;
 
   const userObj = { id: kakaoId, display_name: nickname, email, avatar_url: avatarUrl };
+  const userJson = encodeURIComponent(JSON.stringify(userObj));
 
-  // 3. URL 파라미터로 전달 (쿠키 대신)
-  const encoded = Buffer.from(JSON.stringify(userObj)).toString('base64');
-  return NextResponse.redirect(`${origin}/?login=${encodeURIComponent(encoded)}`);
+  return NextResponse.redirect(`${origin}/?login=${userJson}`);
 }

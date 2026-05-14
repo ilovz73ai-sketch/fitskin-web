@@ -28,21 +28,34 @@ export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Scre
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | undefined>();
 
   useEffect(() => {
-    // 카카오 콜백에서 ?login=<base64> 파라미터로 전달된 경우
     const params = new URLSearchParams(window.location.search);
+
+    // 카카오 콜백 성공: ?login=<json>
     const loginParam = params.get('login');
     if (loginParam) {
       try {
-        const u = JSON.parse(atob(decodeURIComponent(loginParam))) as FsUser;
+        const u = JSON.parse(decodeURIComponent(loginParam)) as FsUser;
         saveUser(u);
         setUser(u);
         setScreen('home');
-        window.history.replaceState({}, '', '/');
-        return;
-      } catch {}
+      } catch (e) {
+        console.error('login parse error', e);
+      }
+      window.history.replaceState({}, '', '/');
+      return;
     }
 
-    // localStorage에 저장된 세션
+    // 카카오 콜백 실패: ?auth_error=... 화면에 표시
+    const authError = params.get('auth_error');
+    if (authError) {
+      const ec = params.get('ec') ?? '';
+      const ed = params.get('ed') ?? '';
+      alert(`로그인 오류: ${authError}${ec ? ` / ${ec}` : ''}${ed ? `\n${ed}` : ''}`);
+      window.history.replaceState({}, '', '/');
+      return;
+    }
+
+    // localStorage 세션
     const u = getStoredUser();
     if (u) {
       setUser(u);
