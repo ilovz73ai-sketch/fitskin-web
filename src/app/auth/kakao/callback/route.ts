@@ -1,65 +1,84 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase-server';
 
-// 카카오 인가 코드 → 액세스 토큰 교환 → 사용자 정보 → profiles upsert → 쿠키 저장
 export async function GET(req: NextRequest) {
   const { searchParams, origin } = req.nextUrl;
   const code = searchParams.get('code');
 
-  if (!code) return NextResponse.redirect(`${origin}/?auth_error=no_code`);
+  if (!code) return NextResponse.redirect(`${origin}/`);
 
   const restApiKey = process.env.KAKAO_REST_API_KEY!;
   const redirectUri = `${origin}/auth/kakao/callback`;
 
   // 1. 코드 → 토큰 교환
-  const tokenRes = await fetch('https://kauth.kakao.com/oauth/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'authorization_code',
-      client_id: restApiKey,
-      redirect_uri: redirectUri,
-      code,
-    }),
-  });
-  if (!tokenRes.ok) return NextResponse.redirect(`${origin}/?auth_error=token_fail`);
-  const { access_token } = await tokenRes.json();
+  let access_token: string;
+  try {
+    const tokenRes = await fetch('https://kauth.kakao.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: restApiKey,
+        redirect_uri: redirectUri,
+        code,
+      }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) throw new Error('no token');
+    access_token = tokenData.access_token;
+  } catch {
+    return NextResponse.redirect(`${origin}/`);
+  }
 
-  // 2. 사용자 정보 조회
-  const userRes = await fetch('https://kapi.kakao.com/v2/user/me', {
-    headers: { Authorization: `Bearer ${access_token}` },
-  });
-  if (!userRes.ok) return NextResponse.redirect(`${origin}/?auth_error=user_fail`);
-  const kakaoUser = await userRes.json();
+  // 2. 카카오 사용자 정보
+  let kakaoUser: Record<string, unknown>;
+  try {
+    const userRes = await fetch('https://kapi.kakao.com/v2/user/me', {
+      headers: { Authorization: `Bearer ${access_token}` },
+    });
+    kakaoUser = await userRes.json();
+  } catch {
+    return NextResponse.redirect(`${origin}/`);
+  }
 
   const kakaoId = String(kakaoUser.id);
-  const nickname = kakaoUser.kakao_account?.profile?.nickname ?? '사용자';
-  const email = kakaoUser.kakao_account?.email ?? null;
-  const avatarUrl = kakaoUser.kakao_account?.profile?.thumbnail_image_url ?? null;
+  const account = kakaoUser.kakao_account as Record<string, unknown> | undefined;
+  const profile = account?.profile as Record<string, unknown> | undefined;
+  const nickname = (profile?.nickname as string) ?? '사용자';
+  const email = (account?.email as string) ?? null;
+  const avatarUrl = (profile?.thumbnail_image_url as string) ?? null;
 
-  // 3. Supabase profiles 테이블 upsert
-  const db = createServerClient();
-  await db.from('profiles').upsert({
-    kakao_id: kakaoId,
-    display_name: nickname,
-    email,
-    avatar_url: avatarUrl,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'kakao_id' });
+  // 3. 쿠키에 저장할 user 객체 (DB 결과 기다리지 않음)
+  const userObj = { id: kakaoId, display_name: nickname, email, avatar_url: avatarUrl };
 
-  const { data: profile } = await db
-    .from('profiles')
-    .select('id, display_name, email, avatar_url')
-    .eq('kakao_id', kakaoId)
-    .single();
+  // 4. DB 저장 (실패해도 로그인은 진행)
+  try {
+    const db = createServerClient();
+    const { data: existing } = await db
+      .from('profiles')
+      .select('id')
+      .eq('kakao_id', kakaoId)
+      .single();
 
-  // 4. 쿠키에 사용자 정보 저장 (7일)
+    if (existing) {
+      Object.assign(userObj, { id: existing.id });
+      await db.from('profiles').update({ display_name: nickname, email, avatar_url: avatarUrl, updated_at: new Date().toISOString() }).eq('kakao_id', kakaoId);
+    } else {
+      const { data: inserted } = await db.from('profiles').insert({ kakao_id: kakaoId, display_name: nickname, email, avatar_url: avatarUrl }).select('id').single();
+      if (inserted) Object.assign(userObj, { id: inserted.id });
+    }
+  } catch {
+    // profiles 테이블 없어도 로그인은 정상 동작
+  }
+
+  // 5. 쿠키 세팅 후 홈으로 이동
   const res = NextResponse.redirect(`${origin}/`);
-  res.cookies.set('fs_user', JSON.stringify(profile), {
-    httpOnly: false,   // 클라이언트에서 읽어야 하므로 false
+  res.cookies.set('fs_user', encodeURIComponent(JSON.stringify(userObj)), {
+    httpOnly: false,
     sameSite: 'lax',
     maxAge: 60 * 60 * 24 * 7,
     path: '/',
+    secure: true,
   });
   return res;
 }
