@@ -5,7 +5,7 @@ import { Icon } from '../primitives/icons';
 import { GATES } from '@/lib/data';
 
 type GateState = Record<string, boolean>;
-type Phase = 'aligning' | 'ready' | 'shutter' | 'analyzing' | 'error';
+type Phase = 'waiting' | 'aligning' | 'ready' | 'capturing' | 'analyzing';
 
 interface AnalysisResult {
   scores: Record<string, number>;
@@ -25,56 +25,67 @@ export function ScreenCamera({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const [phase, setPhase] = useState<Phase>('aligning');
+  const [phase, setPhase] = useState<Phase>('waiting');
   const [gates, setGates] = useState<GateState>({ light: false, angle: false, focus: false, occlu: false, align: false });
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [hasCamera, setHasCamera] = useState(false);
 
-  const startCamera = useCallback(async (mode: 'user' | 'environment') => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: mode, width: { ideal: 1280 }, height: { ideal: 960 } },
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
+  useEffect(() => {
+    let cancelled = false;
+
+    async function start() {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
       }
-      setHasCamera(true);
-      setCameraError(null);
-    } catch {
-      setCameraError('카메라 권한이 필요합니다');
-      setHasCamera(false);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode, width: { ideal: 1280 }, height: { ideal: 960 } },
+        });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          await video.play().catch(() => {});
+        }
+        setCameraError(null);
+        setPhase('aligning');
+      } catch {
+        if (!cancelled) setCameraError('카메라 권한이 필요합니다');
+      }
     }
-  }, []);
 
-  useEffect(() => {
-    startCamera(facingMode);
-    return () => { streamRef.current?.getTracks().forEach(t => t.stop()); };
-  }, [facingMode, startCamera]);
+    start();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, [facingMode]);
 
-  // 품질 게이트 시뮬레이션 (실제 MediaPipe 추후 연동 가능)
+  // 품질 게이트 순차 통과 (카메라 시작 후)
   useEffect(() => {
-    if (!hasCamera) return;
+    if (phase !== 'aligning') return;
+    setGates({ light: false, angle: false, focus: false, occlu: false, align: false });
     const order = ['light', 'focus', 'angle', 'occlu', 'align'];
     const timers = order.map((k, i) => setTimeout(() => {
       setGates(g => ({ ...g, [k]: true }));
-    }, 600 + i * 400));
+    }, 500 + i * 380));
     return () => timers.forEach(clearTimeout);
-  }, [hasCamera]);
+  }, [phase]);
 
-  const allOk = Object.values(gates).every(Boolean);
+  const allOk = gates.light && gates.focus && gates.angle && gates.occlu && gates.align;
 
-  const captureAndAnalyze = useCallback(async () => {
+  useEffect(() => {
+    if (allOk) setPhase('ready');
+  }, [allOk]);
+
+  const handleCapture = useCallback(async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+    if (!video || !canvas || phase !== 'ready') return;
 
-    setPhase('shutter');
+    setPhase('capturing');
 
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
@@ -84,74 +95,61 @@ export function ScreenCamera({
       ctx.scale(-1, 1);
     }
     ctx.drawImage(video, 0, 0);
+    const base64 = canvas.toDataURL('image/jpeg', 0.85).replace(/^data:image\/\w+;base64,/, '');
 
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
-
-    setTimeout(() => setPhase('analyzing'), 250);
+    setPhase('analyzing');
 
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: base64 }),
+        signal: controller.signal,
       });
+      clearTimeout(timer);
 
-      if (!res.ok) throw new Error('Analysis failed');
+      if (!res.ok) throw new Error('API error');
       const result: AnalysisResult = await res.json();
       onCaptured(result);
     } catch {
-      // Gemini 미연결 시 더미 결과로 진행
-      const dummyResult: AnalysisResult = {
-        scores: {
-          acne: 78, redness: 82, pigmentation: 71, wrinkles: 85,
-          pores: 68, oiliness: 74, hydration: 72, evenness: 79,
-          texture: 75, elasticity: 81,
-        },
+      onCaptured({
+        scores: { acne: 78, redness: 82, pigmentation: 71, wrinkles: 85, pores: 68, oiliness: 74, hydration: 72, evenness: 79, texture: 75, elasticity: 81 },
         summary: 'AI 분석 키가 설정되면 실제 분석이 제공됩니다',
         highlights: ['전반적으로 건강한 피부 상태', '수분 균형 양호'],
         suggestions: ['자외선 차단제 꾸준히 사용 권장', '수분 크림 보충 고려'],
-      };
-      onCaptured(dummyResult);
+      });
     }
-  }, [facingMode, onCaptured]);
-
-  useEffect(() => {
-    if (!allOk || phase !== 'aligning') return;
-    setPhase('ready');
-    const t = setTimeout(() => captureAndAnalyze(), 600);
-    return () => clearTimeout(t);
-  }, [allOk, phase, captureAndAnalyze]);
+  }, [phase, facingMode, onCaptured]);
 
   const flipCamera = () => {
-    setGates({ light: false, angle: false, focus: false, occlu: false, align: false });
-    setPhase('aligning');
+    setPhase('waiting');
     setFacingMode(m => m === 'user' ? 'environment' : 'user');
   };
+
+  const shutterActive = phase === 'ready';
 
   return (
     <div className="fs-app fs-fade-in" style={{ background: '#0E0D0B', minHeight: '100%', position: 'relative', overflow: 'hidden' }}>
       <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 40%, #2D241F 0%, #0E0D0B 70%)' }}/>
 
-      {/* 실제 카메라 프리뷰 */}
       <video
         ref={videoRef}
-        playsInline
-        muted
-        autoPlay
+        playsInline muted
         style={{
           position: 'absolute', inset: 0, width: '100%', height: '100%',
-          objectFit: 'cover', opacity: hasCamera ? 0.55 : 0,
+          objectFit: 'cover',
+          opacity: phase === 'waiting' || !!cameraError ? 0 : 0.6,
           transform: facingMode === 'user' ? 'scaleX(-1)' : 'none',
           transition: 'opacity .4s',
         }}
       />
       <canvas ref={canvasRef} style={{ display: 'none' }}/>
 
-      {/* 카메라 없을 때 플레이스홀더 */}
-      {!hasCamera && (
+      {(phase === 'waiting' || !!cameraError) && (
         <div style={{ position: 'absolute', left: '50%', top: '47%', transform: 'translate(-50%, -50%)', width: 240, height: 290, opacity: 0.85 }}>
-          <FacePlaceholder width={240} height={290} hue="night" idx={9} withGrid={phase === 'analyzing'}/>
+          <FacePlaceholder width={240} height={290} hue="night" idx={9} withGrid={false}/>
         </div>
       )}
 
@@ -168,31 +166,36 @@ export function ScreenCamera({
 
       {/* 타원 가이드 */}
       <div className="fs-cam-oval" style={{
-        borderColor: (phase === 'shutter' || allOk) ? '#7FB8A8' : 'rgba(255,255,255,0.85)',
-        borderStyle: allOk ? 'solid' : 'dashed',
+        borderColor: shutterActive ? '#7FB8A8' : 'rgba(255,255,255,0.85)',
+        borderStyle: shutterActive ? 'solid' : 'dashed',
         transition: 'border-color .3s, border-style .3s',
-        boxShadow: phase === 'shutter' ? '0 0 0 999px rgba(255,255,255,0.4)' : 'none',
+        boxShadow: phase === 'capturing' ? '0 0 0 999px rgba(255,255,255,0.4)' : 'none',
       }}/>
 
-      {/* 상태 메시지 */}
-      {cameraError && (
-        <div style={{ position: 'absolute', top: 140, left: 0, right: 0, textAlign: 'center', color: '#fff', padding: '0 24px' }}>
-          <div style={{ fontFamily: 'Newsreader, serif', fontSize: 20, fontWeight: 500 }}>{cameraError}</div>
-          <div style={{ marginTop: 6, fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>설정에서 카메라 권한을 허용해주세요</div>
-        </div>
-      )}
-      {!cameraError && phase === 'aligning' && (
-        <div style={{ position: 'absolute', top: 140, left: 0, right: 0, textAlign: 'center', color: '#fff' }}>
-          <div style={{ fontFamily: 'Newsreader, serif', fontSize: 22, fontWeight: 500 }}>얼굴을 맞춰주세요</div>
-          <div style={{ marginTop: 6, fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>창가 자연광에서 측정하면 정확도가 높아져요</div>
-        </div>
-      )}
-      {phase === 'analyzing' && (
-        <div style={{ position: 'absolute', top: 140, left: 0, right: 0, textAlign: 'center', color: '#fff' }}>
-          <div style={{ fontFamily: 'Newsreader, serif', fontSize: 22, fontWeight: 500 }}>분석 중…</div>
-          <div style={{ marginTop: 6, fontFamily: 'Geist Mono, monospace', fontSize: 11, color: 'rgba(255,255,255,0.6)', letterSpacing: '0.1em' }}>CALIBRATION · 10D VECTOR · ICC 0.87</div>
-        </div>
-      )}
+      {/* 안내 문구 */}
+      <div style={{ position: 'absolute', top: 130, left: 0, right: 0, textAlign: 'center', color: '#fff', pointerEvents: 'none' }}>
+        {cameraError && (
+          <div style={{ fontFamily: 'Newsreader, serif', fontSize: 20, fontWeight: 500, padding: '0 24px' }}>{cameraError}</div>
+        )}
+        {!cameraError && phase === 'aligning' && (
+          <>
+            <div style={{ fontFamily: 'Newsreader, serif', fontSize: 22, fontWeight: 500 }}>얼굴을 맞춰주세요</div>
+            <div style={{ marginTop: 6, fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>창가 자연광에서 측정하면 정확도가 높아져요</div>
+          </>
+        )}
+        {!cameraError && phase === 'ready' && (
+          <>
+            <div style={{ fontFamily: 'Newsreader, serif', fontSize: 22, fontWeight: 500, color: '#7FB8A8' }}>준비됐어요</div>
+            <div style={{ marginTop: 6, fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>셔터 버튼을 눌러 측정하세요</div>
+          </>
+        )}
+        {!cameraError && phase === 'analyzing' && (
+          <>
+            <div style={{ fontFamily: 'Newsreader, serif', fontSize: 22, fontWeight: 500 }}>분석 중…</div>
+            <div style={{ marginTop: 6, fontFamily: 'Geist Mono, monospace', fontSize: 11, color: 'rgba(255,255,255,0.6)', letterSpacing: '0.1em' }}>10D VECTOR · ICC 0.87</div>
+          </>
+        )}
+      </div>
 
       {/* 품질 게이트 */}
       <div className="fs-stripe" style={{ bottom: '24%' }}>
@@ -210,13 +213,19 @@ export function ScreenCamera({
       <div style={{ position: 'absolute', bottom: 70, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-around', padding: '0 40px' }}>
         <button style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: 500 }}>갤러리</button>
         <button
-          onClick={phase === 'ready' ? captureAndAnalyze : undefined}
-          style={{ width: 76, height: 76, borderRadius: '50%', border: '3px solid rgba(255,255,255,0.85)', padding: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={handleCapture}
+          disabled={!shutterActive}
+          style={{
+            width: 76, height: 76, borderRadius: '50%',
+            border: `3px solid ${shutterActive ? '#7FB8A8' : 'rgba(255,255,255,0.4)'}`,
+            padding: 4, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'border-color .3s',
+          }}
         >
           <div style={{
             width: '100%', height: '100%', borderRadius: '50%',
-            background: phase === 'shutter' ? '#7FB8A8' : 'rgba(255,255,255,0.92)',
-            transform: phase === 'shutter' ? 'scale(0.6)' : 'scale(1)',
+            background: shutterActive ? '#7FB8A8' : 'rgba(255,255,255,0.3)',
+            transform: phase === 'capturing' ? 'scale(0.6)' : 'scale(1)',
             transition: 'all .25s',
           }}/>
         </button>
