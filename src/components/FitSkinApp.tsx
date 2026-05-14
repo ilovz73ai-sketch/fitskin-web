@@ -13,17 +13,30 @@ import { ScreenB2B } from './screens/ScreenB2B';
 type Screen = 'onboard' | 'home' | 'camera' | 'result' | 'trend' | 'routine' | 'me' | 'b2b';
 const TAB_SCREENS: Screen[] = ['home', 'trend', 'routine', 'me'];
 
+interface AnalysisResult {
+  scores: Record<string, number>;
+  summary: string;
+  highlights: string[];
+  suggestions: string[];
+}
+
 export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Screen }) {
   const [screen, setScreen] = useState<Screen>(initialScreen);
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | undefined>();
 
   const nav = (s: string) => setScreen(s as Screen);
+
+  const handleCaptured = (result?: AnalysisResult) => {
+    setAnalysisResult(result);
+    nav('result');
+  };
 
   let body: React.ReactNode;
   switch (screen) {
     case 'onboard': body = <ScreenOnboard onStart={() => nav('home')}/>; break;
     case 'home':    body = <ScreenHome onCapture={() => nav('camera')} onNav={nav}/>; break;
-    case 'camera':  body = <ScreenCamera onClose={() => nav('home')} onCaptured={() => nav('result')}/>; break;
-    case 'result':  body = <ScreenResult onDone={() => nav('trend')}/>; break;
+    case 'camera':  body = <ScreenCamera onClose={() => nav('home')} onCaptured={handleCaptured}/>; break;
+    case 'result':  body = <ScreenResult onDone={() => nav('trend')} analysisResult={analysisResult}/>; break;
     case 'trend':   body = <ScreenTrend onNav={nav}/>; break;
     case 'routine': body = <ScreenRoutine/>; break;
     case 'me':      body = <ScreenMe/>; break;
