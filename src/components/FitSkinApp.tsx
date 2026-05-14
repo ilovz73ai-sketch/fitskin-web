@@ -22,10 +22,21 @@ interface AnalysisResult {
   suggestions: string[];
 }
 
+// DB에 프로필 upsert (fire-and-forget)
+function saveProfileToDb(u: FsUser) {
+  fetch('/api/profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(u),
+  }).catch(() => {});
+}
+
 export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Screen }) {
   const [user, setUser] = useState<FsUser | null>(null);
   const [screen, setScreen] = useState<Screen>(initialScreen);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | undefined>();
+  // 새 측정 전 마지막 점수 — ScreenResult에서 delta 계산에 사용
+  const [prevScore, setPrevScore] = useState<number | undefined>();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -38,6 +49,7 @@ export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Scre
         saveUser(u);
         setUser(u);
         setScreen('home');
+        saveProfileToDb(u); // 프로필 DB 저장
       } catch (e) {
         console.error('login parse error', e);
       }
@@ -45,7 +57,7 @@ export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Scre
       return;
     }
 
-    // 카카오 콜백 실패: ?auth_error=... 화면에 표시
+    // 카카오 콜백 실패
     const authError = params.get('auth_error');
     if (authError) {
       const ec = params.get('ec') ?? '';
@@ -55,13 +67,27 @@ export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Scre
       return;
     }
 
-    // localStorage 세션
+    // localStorage 세션 복원
     const u = getStoredUser();
     if (u) {
       setUser(u);
       setScreen('home');
     }
   }, []);
+
+  // 로그인된 유저의 최신 측정 점수를 가져와 prevScore에 저장
+  // (새 측정 시작 전 기준값으로 사용)
+  useEffect(() => {
+    if (!user?.id) return;
+    fetch(`/api/measurements?userId=${user.id}`)
+      .then(r => r.json())
+      .then((data: { composite_score: number }[]) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setPrevScore(data[0].composite_score);
+        }
+      })
+      .catch(() => {});
+  }, [user?.id]);
 
   const nav = (s: string) => setScreen(s as Screen);
 
@@ -73,20 +99,21 @@ export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Scre
   const handleSignOut = () => {
     signOut();
     setUser(null);
+    setPrevScore(undefined);
     setScreen('onboard');
   };
 
   let body: React.ReactNode;
   switch (screen) {
     case 'onboard': body = <ScreenOnboard onStart={() => nav('home')}/>; break;
-    case 'home':    body = <ScreenHome onCapture={() => nav('camera')} onNav={nav}/>; break;
-    case 'camera':  body = <ScreenCamera onClose={() => nav('home')} onCaptured={handleCaptured}/>; break;
-    case 'result':  body = <ScreenResult onDone={() => nav('trend')} analysisResult={analysisResult}/>; break;
-    case 'trend':   body = <ScreenTrend onNav={nav}/>; break;
+    case 'home':    body = <ScreenHome onCapture={() => nav('camera')} onNav={nav} user={user}/>; break;
+    case 'camera':  body = <ScreenCamera onClose={() => nav('home')} onCaptured={handleCaptured} userId={user?.id}/>; break;
+    case 'result':  body = <ScreenResult onDone={() => nav('trend')} analysisResult={analysisResult} prevScore={prevScore}/>; break;
+    case 'trend':   body = <ScreenTrend onNav={nav} user={user}/>; break;
     case 'routine': body = <ScreenRoutine/>; break;
     case 'me':      body = <ScreenMe user={user} onSignOut={handleSignOut}/>; break;
     case 'b2b':     body = <ScreenB2B/>; break;
-    default:        body = <ScreenHome onCapture={() => nav('camera')} onNav={nav}/>;
+    default:        body = <ScreenHome onCapture={() => nav('camera')} onNav={nav} user={user}/>;
   }
 
   const showTabBar = TAB_SCREENS.includes(screen);

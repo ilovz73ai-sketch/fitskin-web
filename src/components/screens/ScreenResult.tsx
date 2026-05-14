@@ -14,14 +14,23 @@ interface AnalysisResult {
   suggestions: string[];
 }
 
-export function ScreenResult({ onDone, analysisResult }: { onDone: () => void; analysisResult?: AnalysisResult }) {
+export function ScreenResult({
+  onDone,
+  analysisResult,
+  prevScore,
+}: {
+  onDone: () => void;
+  analysisResult?: AnalysisResult;
+  prevScore?: number; // 이전 측정 점수 (FitSkinApp에서 전달)
+}) {
   const hasAI = !!analysisResult;
 
   const composite = hasAI
     ? Math.round(Object.values(analysisResult!.scores).reduce((a, b) => a + b, 0) / Object.values(analysisResult!.scores).length)
     : TODAY_SCORE;
 
-  const delta = composite - YDAY_SCORE;
+  // 실제 이전 점수 있으면 사용, 없으면 모의 데이터 기준
+  const delta = composite - (prevScore ?? YDAY_SCORE);
   const now = new Date();
   const timestamp = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 

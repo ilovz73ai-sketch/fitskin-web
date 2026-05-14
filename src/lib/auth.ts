@@ -26,5 +26,7 @@ export function signOut() {
 export function kakaoLoginUrl(): string {
   const restApiKey = process.env.NEXT_PUBLIC_KAKAO_REST_API_KEY!;
   const redirectUri = `${window.location.origin}/auth/kakao/callback`;
-  return `https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=${restApiKey}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  // profile_nickname, profile_image, account_email 명시 요청
+  const scope = encodeURIComponent('profile_nickname,profile_image,account_email');
+  return `https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=${restApiKey}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}`;
 }

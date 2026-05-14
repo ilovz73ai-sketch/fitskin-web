@@ -15,9 +15,11 @@ interface AnalysisResult {
 export function ScreenCamera({
   onClose,
   onCaptured,
+  userId,
 }: {
   onClose: () => void;
   onCaptured: (result?: AnalysisResult) => void;
+  userId?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -96,20 +98,33 @@ export function ScreenCamera({
 
     try {
       const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 25000);
+      const tid = setTimeout(() => controller.abort(), 30000);
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64 }),
+        body: JSON.stringify({ imageBase64: base64, userId }),
         signal: controller.signal,
       });
       clearTimeout(tid);
-      const result: AnalysisResult = res.ok ? await res.json() : dummy;
-      onCaptured(result);
-    } catch {
-      onCaptured(dummy);
+      if (res.ok) {
+        const result: AnalysisResult = await res.json();
+        onCaptured(result);
+      } else {
+        // API 실패 — 상세 에러 표시
+        const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        const detail = errBody.details
+          ? '\n' + (errBody.details as string[]).slice(0,2).join('\n')
+          : '';
+        console.error('[analyze] API 실패:', errBody);
+        setErrorMsg(`분석 실패: ${errBody.error ?? res.status}${detail}\n\n다시 시도해주세요.`);
+        setPhase('error');
+      }
+    } catch (e) {
+      console.error('[analyze] 네트워크 오류:', e);
+      setErrorMsg('네트워크 오류가 발생했습니다. 다시 시도해주세요.');
+      setPhase('error');
     }
-  }, [phase, facingMode, onCaptured]);
+  }, [phase, facingMode, onCaptured, userId]);
 
   const gateKeys = GATES.map(g => g.key);
   const isReady = phase === 'ready';

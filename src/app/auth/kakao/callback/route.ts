@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
       }),
     });
     tokenData = await tokenRes.json();
-  } catch (e) {
+  } catch {
     return NextResponse.redirect(`${origin}/?auth_error=token_fetch_failed`);
   }
 
@@ -42,11 +42,21 @@ export async function GET(req: NextRequest) {
 
   const access_token = tokenData.access_token as string;
 
-  // 2. 사용자 정보
+  // 2. 사용자 정보 (property_keys로 필요한 항목만 명시)
   let kakaoUser: Record<string, unknown>;
   try {
     const userRes = await fetch('https://kapi.kakao.com/v2/user/me', {
-      headers: { Authorization: `Bearer ${access_token}` },
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        property_keys: JSON.stringify([
+          'kakao_account.profile',
+          'kakao_account.email',
+        ]),
+      }),
     });
     kakaoUser = await userRes.json();
   } catch {
@@ -56,11 +66,26 @@ export async function GET(req: NextRequest) {
   const kakaoId = String(kakaoUser.id);
   const account = kakaoUser.kakao_account as Record<string, unknown> | undefined;
   const profile = account?.profile as Record<string, unknown> | undefined;
-  const nickname = (profile?.nickname as string) ?? '사용자';
-  const email = (account?.email as string) ?? null;
-  const avatarUrl = (profile?.thumbnail_image_url as string) ?? null;
 
-  const userObj = { id: kakaoId, display_name: nickname, email, avatar_url: avatarUrl };
+  // 닉네임 우선순위: profile.nickname → email 앞부분 → id 마지막 6자리
+  const rawNickname = (profile?.nickname as string | undefined)?.trim();
+  const email = (account?.email as string) ?? null;
+
+  let display_name: string;
+  if (rawNickname && rawNickname !== '사용자' && rawNickname !== 'user' && rawNickname.length > 0) {
+    display_name = rawNickname;
+  } else if (email) {
+    display_name = email.split('@')[0];
+  } else {
+    display_name = `user_${kakaoId.slice(-6)}`;
+  }
+
+  const avatarUrl =
+    (profile?.profile_image_url as string) ??
+    (profile?.thumbnail_image_url as string) ??
+    null;
+
+  const userObj = { id: kakaoId, display_name, email, avatar_url: avatarUrl };
   const userJson = encodeURIComponent(JSON.stringify(userObj));
 
   return NextResponse.redirect(`${origin}/?login=${userJson}`);

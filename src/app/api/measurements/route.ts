@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   const db = createServerClient();
   const { data, error } = await db
     .from('measurements')
-    .select('id, created_at, scores, composite_score, summary')
+    .select('id, created_at, scores, composite_score, summary, highlights, suggestions')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(30);
