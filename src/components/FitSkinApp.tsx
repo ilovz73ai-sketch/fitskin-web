@@ -9,7 +9,7 @@ import { ScreenTrend } from './screens/ScreenTrend';
 import { ScreenRoutine } from './screens/ScreenRoutine';
 import { ScreenMe } from './screens/ScreenMe';
 import { ScreenB2B } from './screens/ScreenB2B';
-import { getStoredUser, signOut } from '@/lib/auth';
+import { getStoredUser, saveUser, signOut } from '@/lib/auth';
 import type { FsUser } from '@/lib/auth';
 
 type Screen = 'onboard' | 'home' | 'camera' | 'result' | 'trend' | 'routine' | 'me' | 'b2b';
@@ -28,6 +28,21 @@ export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Scre
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | undefined>();
 
   useEffect(() => {
+    // 카카오 콜백에서 ?login=<base64> 파라미터로 전달된 경우
+    const params = new URLSearchParams(window.location.search);
+    const loginParam = params.get('login');
+    if (loginParam) {
+      try {
+        const u = JSON.parse(atob(decodeURIComponent(loginParam))) as FsUser;
+        saveUser(u);
+        setUser(u);
+        setScreen('home');
+        window.history.replaceState({}, '', '/');
+        return;
+      } catch {}
+    }
+
+    // localStorage에 저장된 세션
     const u = getStoredUser();
     if (u) {
       setUser(u);

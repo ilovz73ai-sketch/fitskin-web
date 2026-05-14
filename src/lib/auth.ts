@@ -5,15 +5,22 @@ export interface FsUser {
   avatar_url: string | null;
 }
 
+const STORAGE_KEY = 'fs_user';
+
 export function getStoredUser(): FsUser | null {
-  if (typeof document === 'undefined') return null;
-  const match = document.cookie.match(/fs_user=([^;]+)/);
-  if (!match) return null;
-  try { return JSON.parse(decodeURIComponent(match[1])); } catch { return null; }
+  if (typeof window === 'undefined') return null;
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    return v ? JSON.parse(v) : null;
+  } catch { return null; }
+}
+
+export function saveUser(user: FsUser) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
 }
 
 export function signOut() {
-  document.cookie = 'fs_user=; Max-Age=0; path=/';
+  localStorage.removeItem(STORAGE_KEY);
 }
 
 export function kakaoLoginUrl(): string {
