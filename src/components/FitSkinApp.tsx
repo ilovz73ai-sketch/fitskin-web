@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { TabBar } from './primitives/TabBar';
 import { ScreenOnboard } from './screens/ScreenOnboard';
 import { ScreenHome } from './screens/ScreenHome';
@@ -9,6 +9,8 @@ import { ScreenTrend } from './screens/ScreenTrend';
 import { ScreenRoutine } from './screens/ScreenRoutine';
 import { ScreenMe } from './screens/ScreenMe';
 import { ScreenB2B } from './screens/ScreenB2B';
+import { onAuthChange, signOut } from '@/lib/auth';
+import type { User } from '@/lib/auth';
 
 type Screen = 'onboard' | 'home' | 'camera' | 'result' | 'trend' | 'routine' | 'me' | 'b2b';
 const TAB_SCREENS: Screen[] = ['home', 'trend', 'routine', 'me'];
@@ -23,6 +25,19 @@ interface AnalysisResult {
 export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Screen }) {
   const [screen, setScreen] = useState<Screen>(initialScreen);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | undefined>();
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onAuthChange(u => {
+      setUser(u);
+      setAuthLoading(false);
+      // 로그인 완료 시 onboard에 있으면 home으로 이동
+      if (u && screen === 'onboard') setScreen('home');
+    });
+    return unsub;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const nav = (s: string) => setScreen(s as Screen);
 
@@ -30,6 +45,19 @@ export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Scre
     setAnalysisResult(result);
     nav('result');
   };
+
+  const handleSignOut = async () => {
+    await signOut();
+    setScreen('onboard');
+  };
+
+  if (authLoading) {
+    return (
+      <div style={{ width: '100%', minHeight: '100vh', maxWidth: 480, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FAF7F2' }}>
+        <div style={{ fontFamily: 'Geist Mono, monospace', fontSize: 11, letterSpacing: '0.14em', color: '#8A847A' }}>FITSKIN</div>
+      </div>
+    );
+  }
 
   let body: React.ReactNode;
   switch (screen) {
@@ -39,7 +67,7 @@ export function FitSkinApp({ initialScreen = 'onboard' }: { initialScreen?: Scre
     case 'result':  body = <ScreenResult onDone={() => nav('trend')} analysisResult={analysisResult}/>; break;
     case 'trend':   body = <ScreenTrend onNav={nav}/>; break;
     case 'routine': body = <ScreenRoutine/>; break;
-    case 'me':      body = <ScreenMe/>; break;
+    case 'me':      body = <ScreenMe user={user} onSignOut={handleSignOut}/>; break;
     case 'b2b':     body = <ScreenB2B/>; break;
     default:        body = <ScreenHome onCapture={() => nav('camera')} onNav={nav}/>;
   }

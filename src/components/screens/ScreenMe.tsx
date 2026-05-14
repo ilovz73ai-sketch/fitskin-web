@@ -1,13 +1,18 @@
 'use client';
 import { Icon } from '../primitives/icons';
+import type { User } from '@/lib/auth';
 
-export function ScreenMe() {
+export function ScreenMe({ user, onSignOut }: { user?: User | null; onSignOut?: () => void }) {
+  const displayName = user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? '게스트';
+  const email = user?.email ?? '';
+  const provider = user?.app_metadata?.provider === 'kakao' ? '카카오 로그인' : user?.app_metadata?.provider === 'google' ? 'Google 로그인' : '';
+
   return (
     <div className="fs-app fs-fade-in" style={{ background: 'var(--fs-bg)', minHeight: '100%', paddingBottom: 100 }}>
       <div style={{ padding: '70px 20px 0' }}>
         <div className="fs-eyebrow">마이</div>
-        <div className="fs-h1" style={{ marginTop: 4 }}>김민지</div>
-        <div className="fs-body" style={{ marginTop: 4, fontSize: 13 }}>minji@example.com · 28세 여 · 카카오 로그인</div>
+        <div className="fs-h1" style={{ marginTop: 4 }}>{displayName}</div>
+        <div className="fs-body" style={{ marginTop: 4, fontSize: 13 }}>{email}{provider ? ` · ${provider}` : ''}</div>
       </div>
 
       <div style={{ padding: '20px 20px 0', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
@@ -89,6 +94,17 @@ export function ScreenMe() {
           ))}
         </div>
       </div>
+
+      {onSignOut && (
+        <div style={{ padding: '8px 20px 0' }}>
+          <button
+            onClick={onSignOut}
+            style={{ width: '100%', padding: '14px', borderRadius: 16, background: 'none', border: '1px solid var(--fs-line-2)', fontSize: 14, color: 'var(--fs-ink-3)', cursor: 'pointer' }}
+          >
+            로그아웃
+          </button>
+        </div>
+      )}
 
       <div style={{ padding: '24px 20px 12px', textAlign: 'center', fontSize: 11, color: 'var(--fs-ink-3)', lineHeight: 1.6 }}>
         FitSkin v0.5.0 · ICC 0.87 · model 3.2.1<br/>
