@@ -1,31 +1,23 @@
-import { supabase } from './supabase';
-import type { User } from '@supabase/supabase-js';
-
-export type { User };
-
-export async function signInWithKakao() {
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'kakao',
-    options: {
-      redirectTo: `${window.location.origin}/auth/callback`,
-      scopes: 'profile_nickname profile_image account_email',
-    },
-  });
-  if (error) throw error;
+export interface FsUser {
+  id: string;
+  display_name: string;
+  email: string | null;
+  avatar_url: string | null;
 }
 
-export async function signOut() {
-  await supabase.auth.signOut();
+export function getStoredUser(): FsUser | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/fs_user=([^;]+)/);
+  if (!match) return null;
+  try { return JSON.parse(decodeURIComponent(match[1])); } catch { return null; }
 }
 
-export async function getUser(): Promise<User | null> {
-  const { data } = await supabase.auth.getUser();
-  return data.user;
+export function signOut() {
+  document.cookie = 'fs_user=; Max-Age=0; path=/';
 }
 
-export function onAuthChange(cb: (user: User | null) => void) {
-  const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-    cb(session?.user ?? null);
-  });
-  return () => subscription.unsubscribe();
+export function kakaoLoginUrl(): string {
+  const restApiKey = process.env.NEXT_PUBLIC_KAKAO_REST_API_KEY!;
+  const redirectUri = `${window.location.origin}/auth/kakao/callback`;
+  return `https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=${restApiKey}&redirect_uri=${encodeURIComponent(redirectUri)}`;
 }

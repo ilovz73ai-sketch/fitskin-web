@@ -1,11 +1,11 @@
 'use client';
 import { Icon } from '../primitives/icons';
-import type { User } from '@/lib/auth';
+import type { FsUser } from '@/lib/auth';
 
-export function ScreenMe({ user, onSignOut }: { user?: User | null; onSignOut?: () => void }) {
-  const displayName = user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? '게스트';
+export function ScreenMe({ user, onSignOut }: { user?: FsUser | null; onSignOut?: () => void }) {
+  const displayName = user?.display_name ?? '게스트';
   const email = user?.email ?? '';
-  const provider = user?.app_metadata?.provider === 'kakao' ? '카카오 로그인' : user?.app_metadata?.provider === 'google' ? 'Google 로그인' : '';
+  const provider = user ? '카카오 로그인' : '';
 
   return (
     <div className="fs-app fs-fade-in" style={{ background: 'var(--fs-bg)', minHeight: '100%', paddingBottom: 100 }}>
